@@ -1,56 +1,495 @@
-const express = require("express");
-const path = require("path");
+<!DOCTYPE html>
+<html lang="en">
 
-const app = express();
+<head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1" />
+    <title>DTAIE | Digital Estate Executor</title>
 
-// Required to receive JSON
-app.use(express.json());
+    <!-- Loads Ethers.js for Blockchain interaction -->
+    <script src="https://cdn.jsdelivr.net/npm/ethers@5.7.2/dist/ethers.umd.min.js" type="module"></script>
+    <!-- Loads Tailwind CSS for clean, modern styling -->
+    <link href="https://cdn.jsdelivr.net/npm/tailwindcss@2.2.19/dist/tailwind.min.css" rel="stylesheet">
 
-// store webhook data in memory
-let webhookStore;
+    <style>
+        /* Custom style to make the status badge pop */
+        .status-badge {
+            transition: all 0.5s ease-in-out;
+        }
 
-// webhook endpoint (OTHER SITES POST HERE)
-app.post("/webhook", (req, res) => {
+        .disabled {
+            cursor: not-allowed;
+        }
+    </style>
+</head>
 
-    const data = req.body;
-    // let mailId;
+<body class="bg-gray-900 text-white font-sans">
+    <div class="container mx-auto px-4 py-12 max-w-3xl">
+        <!-- Header -->
+        <div class="text-center mb-10">
+            <h1 class="text-5xl font-extrabold text-blue-400 mb-2">DTAIE</h1>
+            <p class="text-gray-400 uppercase tracking-widest text-sm">AI-Verified Digital Estate Executor</p>
+        </div>
 
-    // if (data.mailId.includes("<")) {
-    //     const start = data.indexOf("<");
-    //     const end = data.indexOf(">");
+        <!-- Vault Card (The Main Demo Focus) -->
+        <div class="bg-gray-800 rounded-3xl p-8 shadow-2xl border border-gray-700">
+            <div class="flex justify-between items-center mb-8">
+                <span id="statusBadge"
+                    class="bg-yellow-900 text-yellow-300 px-4 py-1 rounded-full text-sm font-bold uppercase">LOCKED
+                    🔒</span>
+                <button id="connectBtn"
+                    class="bg-blue-600 hover:bg-blue-700 text-white px-6 py-2 rounded-xl text-sm font-bold transition shadow-md">Connect
+                    Wallet</button>
+            </div>
 
-    //     mailId = data.substring(start + 1, end);
-    // } else {
-    //     mailId = data;
-    // }
+            <div class="space-y-6">
+                <div>
+                    <label class="text-gray-400 text-sm">Flare Contract Address</label>
+                    <p id="contractAddr" class="font-mono text-sm break-all text-gray-300 bg-gray-900 p-2 rounded-lg">
+                        Not Loaded</p>
+                </div>
 
-    console.log("Webhook received:");
-    console.log(data);
+                <div class="grid grid-cols-2 gap-4">
+                    <div class="bg-gray-900 p-4 rounded-2xl">
+                        <label class="text-gray-500 text-xs block mb-1">Current Vault Balance (Flare)</label>
+                        <span id="balance" class="text-2xl font-bold">0.00</span> <span
+                            class="text-gray-400">CFLR</span>
+                    </div>
+                    <div class="bg-gray-900 p-4 rounded-2xl">
+                        <label class="text-gray-500 text-xs block mb-1">AI Verification Status</label>
+                        <span id="aiStatus" class="text-xl font-bold text-red-400">Awaiting Email...</span>
+                    </div>
+                </div>
 
-    // store data
-    webhookStore = data;
+                <div id="statusMessage"
+                    class="bg-gray-700 p-4 rounded-xl text-sm text-gray-300 text-center h-16 flex items-center justify-center">
+                    Connect wallet to initialize the system.
+                </div>
 
-    res.status(200).send("Webhook received successfully");
-});
-let i=0;
+                <button id="claimBtn"
+                    class="w-full py-4 rounded-2xl font-bold text-lg transition shadow-lg transition duration-300 ease-in-out bg-gray-600">Execute
+                    Trust Transfer</button>
+                <button id="mailStatusBtn"
+                    class="w-full py-4 rounded-2xl font-bold text-lg transition shadow-lg transition duration-300 ease-in-out bg-gray-600">Check
+                    Mail Status</button>
+            </div>
+        </div>
 
-// endpoint for frontend to get data
-app.get("/data", (req, res) => {
-    if (!webhookStore) {
-        return res.status(404).json({ error: "No webhook data available" });
-    }
-    res.json(webhookStore);
-    webhookStore = null; // clear data after sending to frontend
-});
+        <!-- Sponsor Footer (To impress everyone) -->
+        <div class="mt-10 text-center">
+            <p class="text-gray-500 text-xs mb-4">This project leverages:</p>
+            <div class="flex justify-center space-x-8 opacity-80 grayscale">
+                <span class="text-lg font-bold text-blue-300">Flare</span>
+                <span class="text-lg font-bold text-purple-300">Plasma (Privacy)</span>
+                <span class="text-lg font-bold text-yellow-300">Sui (UX Focus)</span>
+                <span class="text-lg font-bold text-white">Ledger (Security)</span>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // === MASTER CONFIG - PASTE YOUR DATA HERE ===
+        // 1. PASTE YOUR FLARE CONTRACT ADDRESS HERE (from Remix)
+        const CONTRACT_ADDRESS = "0x007C16CCC574A6E328df26C700d9E248b1396Dcc"; // <-- PASTE YOUR FLARE DEPLOYED ADDRESS HERE (The one you just got!)
+
+        // --- VARIABLES ---
+        let signer;
+        let provider;
+        let contractInstance;
+        let isConnected = false;
+        let claimable = false;
+        const FIRE_TIME = 5000; // 5 seconds delay for dramatic effect
+        let mailStatus = false;
+        let isClaimed = false;
 
 
-// serve frontend
-app.use(express.static((path.join(__dirname, "public"))));
+        document.getElementById('claimBtn').classList.add("disabled");
+
+        // --- 1. WALLET CONNECTION (Connects to Flare) ---
+        document.getElementById('connectBtn').onclick = async () => {
+            if (window.ethereum) {
+                // *** THE FIX IS HERE: Setting the Chain ID to 114 (Flare Coston2) ***
+                const CHAIN_ID = 114; // Flare Coston2 Chain ID
+                const FLORE_NETWORK_NAME = "Flare Coston2";
+
+                try {
+                    await window.ethereum.request({ method: 'wallet_switchEthereumChain', params: [{ chainId: `0x${CHAIN_ID.toString(16)}` }] });
+                } catch (switchError) {
+                    // If switching fails (e.g., network not added), we add it first
+                    if (switchError.code === 4902) {
+                        await window.ethereum.request({
+                            method: 'wallet_addEthereumChain',
+                            params: [{
+                                chainId: `0x${CHAIN_ID.toString(16)}`,
+                                chainName: FLORE_NETWORK_NAME,
+                                nativeCurrency: { name: 'C2FLR', symbol: 'C2FLR', decimals: 18 },
+                                rpcUrls: ['https://coston2-api.flare.network/ext/C/rpc'], // Use a reliable Flare RPC
+                            }],
+                        });
+                    } else {
+                        console.error("Could not switch/add network:", switchError);
+                        return;
+                    }
+                }
+
+                // Now that the network is set, continue with connection
+                provider = new ethers.providers.Web3Provider(window.ethereum);
+                await provider.send("eth_requestAccounts", []);
+                signer = provider.getSigner();
+                const addr = await signer.getAddress();
+
+                // Set UI elements
+                document.getElementById('contractAddr').innerText = CONTRACT_ADDRESS.substring(0, 10) + '...';
+                statusMessage.innerText = "Wallet Connected. Checking Vault Balance...";
+                connectBtn.innerText = "Connected: " + addr.substring(0, 6) + "...";
+
+                // Read Balance from Flare Contract
+                // NOTE: The contract ABI is simplified here for quick demo
+                const contractABI = [
+                    {
+                        "inputs": [
+                            {
+                                "internalType": "uint256[]",
+                                "name": "publicSignals",
+                                "type": "uint256[]"
+                            }
+                        ],
+                        "name": "executeTrust",
+                        "outputs": [],
+                        "stateMutability": "payable",
+                        "type": "function"
+                    },
+                    {
+                        "inputs": [
+                            {
+                                "internalType": "address",
+                                "name": "_beneficiary",
+                                "type": "address"
+                            },
+                            {
+                                "internalType": "uint256",
+                                "name": "_releaseTime",
+                                "type": "uint256"
+                            },
+                            {
+                                "internalType": "address",
+                                "name": "_verifier",
+                                "type": "address"
+                            }
+                        ],
+                        "stateMutability": "payable",
+                        "type": "constructor"
+                    },
+                    {
+                        "anonymous": false,
+                        "inputs": [
+                            {
+                                "indexed": true,
+                                "internalType": "address",
+                                "name": "owner",
+                                "type": "address"
+                            },
+                            {
+                                "indexed": false,
+                                "internalType": "uint256",
+                                "name": "amount",
+                                "type": "uint256"
+                            }
+                        ],
+                        "name": "FundsRescued",
+                        "type": "event"
+                    },
+                    {
+                        "anonymous": false,
+                        "inputs": [
+                            {
+                                "indexed": false,
+                                "internalType": "string",
+                                "name": "message",
+                                "type": "string"
+                            }
+                        ],
+                        "name": "LogMessage",
+                        "type": "event"
+                    },
+                    {
+                        "inputs": [],
+                        "name": "rescueFunds",
+                        "outputs": [],
+                        "stateMutability": "nonpayable",
+                        "type": "function"
+                    },
+                    {
+                        "anonymous": false,
+                        "inputs": [
+                            {
+                                "indexed": true,
+                                "internalType": "address",
+                                "name": "beneficiary",
+                                "type": "address"
+                            },
+                            {
+                                "indexed": false,
+                                "internalType": "uint256",
+                                "name": "amount",
+                                "type": "uint256"
+                            }
+                        ],
+                        "name": "TrustTriggered",
+                        "type": "event"
+                    },
+                    {
+                        "inputs": [],
+                        "name": "ALLOWED_DOMAIN_HASH",
+                        "outputs": [
+                            {
+                                "internalType": "bytes32",
+                                "name": "",
+                                "type": "bytes32"
+                            }
+                        ],
+                        "stateMutability": "view",
+                        "type": "function"
+                    },
+                    {
+                        "inputs": [],
+                        "name": "amount",
+                        "outputs": [
+                            {
+                                "internalType": "uint256",
+                                "name": "",
+                                "type": "uint256"
+                            }
+                        ],
+                        "stateMutability": "view",
+                        "type": "function"
+                    },
+                    {
+                        "inputs": [],
+                        "name": "beneficiary",
+                        "outputs": [
+                            {
+                                "internalType": "address",
+                                "name": "",
+                                "type": "address"
+                            }
+                        ],
+                        "stateMutability": "view",
+                        "type": "function"
+                    },
+                    {
+                        "inputs": [],
+                        "name": "DURATION",
+                        "outputs": [
+                            {
+                                "internalType": "uint256",
+                                "name": "",
+                                "type": "uint256"
+                            }
+                        ],
+                        "stateMutability": "view",
+                        "type": "function"
+                    },
+                    {
+                        "inputs": [],
+                        "name": "isPaidOut",
+                        "outputs": [
+                            {
+                                "internalType": "bool",
+                                "name": "",
+                                "type": "bool"
+                            }
+                        ],
+                        "stateMutability": "view",
+                        "type": "function"
+                    },
+                    {
+                        "inputs": [],
+                        "name": "owner",
+                        "outputs": [
+                            {
+                                "internalType": "address",
+                                "name": "",
+                                "type": "address"
+                            }
+                        ],
+                        "stateMutability": "view",
+                        "type": "function"
+                    },
+                    {
+                        "inputs": [],
+                        "name": "releaseTime",
+                        "outputs": [
+                            {
+                                "internalType": "uint256",
+                                "name": "",
+                                "type": "uint256"
+                            }
+                        ],
+                        "stateMutability": "view",
+                        "type": "function"
+                    },
+                    {
+                        "inputs": [
+                            {
+                                "internalType": "bytes32",
+                                "name": "",
+                                "type": "bytes32"
+                            }
+                        ],
+                        "name": "usedNullifiers",
+                        "outputs": [
+                            {
+                                "internalType": "bool",
+                                "name": "",
+                                "type": "bool"
+                            }
+                        ],
+                        "stateMutability": "view",
+                        "type": "function"
+                    },
+                    {
+                        "inputs": [],
+                        "name": "verifier",
+                        "outputs": [
+                            {
+                                "internalType": "contract IEmailVerifier",
+                                "name": "",
+                                "type": "address"
+                            }
+                        ],
+                        "stateMutability": "view",
+                        "type": "function"
+                    }
+                ];
+                contractInstance = new ethers.Contract(CONTRACT_ADDRESS, contractABI, signer);
+                contractInstance.on("LogMessage", (message) => {
+                    console.log("Contract Log:", message);
+                });
+                console.log("Contract Instance:", contractInstance);
+                // const balance = await contractInstance.getBalance();
+                // document.getElementById('balance').innerText = ethers.utils.formatEther(balance);
+
+                // Enable listening state
+                isConnected = true;
+                claimable = true;
+                if (!mailStatus) {
+                    statusMessage.innerText = "Vault Ready. Waiting for n8n Webhook Signal...";
+                } else {
+                    statusMessage.innerText = "Vault Ready. Webhook Signal Received!";
+                }
+                listenForWebhook();
+                if (mailStatus && isConnected) {
+                    document.getElementById('claimBtn').classList.remove("disabled");
+                }
+
+            } else {
+                alert("Please install MetaMask and switch to Flare Coston2!");
+            }
+        };
 
 
-// start server
-const PORT = process.env.PORT || 3000;
+        document.getElementById('claimBtn').onclick = async () => {
+            // Step B: Call the Smart Contract (The Final Action)
+            try {
+                statusMessage.innerText =
+                    "Sending Transaction to Flare Network... (Executing Trust)";
 
-app.listen(PORT, () => {
-    console.log(`Server running on port ${PORT}`);
-});
+                let mockProof = 0xabcd;
+                let mockSignals = [1, 8]; // Simulated public signals from ZK-Proof
+
+                const tx = await contractInstance.executeTrust(mockSignals, {
+                    gasLimit: 500000 // Use a higher gas limit for safety
+                });
+
+                await tx.wait(); // Wait for the transaction to confirm on Flare
+
+                // If successful: UNLOCK!
+                unlockVault();
+                claimBtn.innerText = "Transfer Complete!";
+                isClaimed = true;
+                document.getElementById('claimBtn').classList.add("disabled");
+            } catch (error) {
+                console.error(error);
+                statusMessage.innerText =
+                    "ERROR: Contract Execution Failed. Check Console.";
+                document.getElementById("statusBadge").innerText = "Error ❌";
+                document.getElementById("statusBadge").className =
+                    "bg-red-800 text-white px-4 py-1 rounded-full text-sm font-bold uppercase";
+            }
+        }
+
+
+        // --- LISTEN FOR THE SIGNAL ONCE THE PAGE LOADS ---
+        // We set up a simple listener that continuously checks the n8n URL
+
+        // --- 2. THE WEBHOOK LISTENER (Connects to n8n) ---
+        // This function is called when you click the "Execute Trust Transfer" button 
+        // after the n8n workflow has successfully validated the email.
+        async function listenForWebhook() {
+            if (!isConnected || !claimable) {
+                statusMessage.innerText =
+                    "ERROR: Wallet not connected or system not ready.";
+                return;
+            }
+
+            if (!mailStatus) {
+                statusMessage.innerText =
+                    "Please verify the email first by clicking 'Check Mail Status'.";
+                return;
+            }
+
+            // Simulate ZK-Proof Generation and Wait (For demo effect)
+            await new Promise((resolve) => setTimeout(resolve, 2000)); // Wait 2 seconds
+        }
+        // --- 3. THE UNLOCK ACTION (Final State) ---
+        function unlockVault() {
+            document.getElementById('statusBadge').innerText = "Unlocked 🔓";
+            document.getElementById('statusBadge').className = "bg-green-600 text-white px-4 py-1 rounded-full text-sm font-bold uppercase";
+            statusMessage.innerText = "SUCCESS: Trust Executed Instantly on Flare!";
+        }
+
+        // --- 3. LISTEN FOR N8N WEBHOOK (The Final Connection) ---
+        // This function listens for the signal from the n8n Webhook URL
+        async function fetchWebhookSignal() {
+            try {
+                const response = await fetch("/data", {
+                    method: "GET",
+                });
+
+                // If status 200
+                if (response.status === 200) {
+                    mailStatus = true;
+                    document.getElementById('mailStatusBtn').classList.add("disabled");
+                    // Step A: Simulate the AI/IF check passed and Webhook fired
+                    aiStatus.innerText = "AI Verification: VALID";
+                    aiStatus.className = "text-xl font-bold text-yellow-300";
+                    if (!isConnected) {
+                        statusMessage.innerText =
+                            "Webhook Signal Received, but Wallet not connected!";
+                        return;
+                    } else {
+                        statusMessage.innerText =
+                            "Signal Received! Preparing Smart Contract Execution...";
+                    }
+                    // Trigger the unlock sequence on the website!
+                    listenForWebhook();
+                } else {
+                    statusMessage.innerText =
+                        "There is no valid email received!";
+                }
+            } catch (error) {
+                console.info("Webhook Call to n8n Failed:", error);
+            }
+        }
+
+        fetchWebhookSignal();
+
+        document.getElementById('mailStatusBtn').onclick = () => {
+            fetchWebhookSignal();
+        };
+
+    </script>
+</body>
+
+</html>
