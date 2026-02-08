@@ -13,22 +13,22 @@ let webhookStore;
 app.post("/webhook", (req, res) => {
 
     const data = req.body;
-    let mailId;
+    // let mailId;
 
-    if (data.includes("<")) {
-        const start = data.indexOf("<");
-        const end = data.indexOf(">");
+    // if (data.mailId.includes("<")) {
+    //     const start = data.indexOf("<");
+    //     const end = data.indexOf(">");
 
-        mailId = data.substring(start + 1, end);
-    } else {
-        mailId = data;
-    }
+    //     mailId = data.substring(start + 1, end);
+    // } else {
+    //     mailId = data;
+    // }
 
     console.log("Webhook received:");
     console.log(data);
 
     // store data
-    webhookStore = mailId;
+    webhookStore = data;
 
     res.status(200).send("Webhook received successfully");
 });
